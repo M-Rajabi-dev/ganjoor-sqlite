@@ -1,0 +1,89 @@
+name: Build SQLite Database
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check upstream changes
+        id: check_upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST_SHA=$(curl -sSL -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/ganjoor/ganjoor-data/commits/main | jq -r .sha)
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "Failed to fetch upstream commit SHA"
+            exit 1
+          fi
+
+          PREV_SHA=""
+          if [ -f "last_sha.txt" ]; then
+            PREV_SHA=$(cat last_sha.txt | tr -d '[:space:]')
+          fi
+
+          echo "latest_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
+
+          if [ "$LATEST_SHA" = "$PREV_SHA" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "No changes in upstream repository."
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download and extract data
+        if: steps.check_upstream.outputs.should_build == 'true'
+        run: |
+          curl -sSL -o ganjoor-data.tar.gz https://github.com/ganjoor/ganjoor-data/archive/refs/heads/main.tar.gz
+          tar -xzf ganjoor-data.tar.gz
+          rm ganjoor-data.tar.gz
+
+      - name: Build SQLite database
+        if: steps.check_upstream.outputs.should_build == 'true'
+        run: |
+          python build_db.py --data-dir ganjoor-data-main --output ganjoor.db
+          rm -rf ganjoor-data-main
+
+      - name: Compress database
+        if: steps.check_upstream.outputs.should_build == 'true'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd
+          zstd -19 -q ganjoor.db -o ganjoor.db.zst
+          gzip -9 -k ganjoor.db
+
+      - name: Update commit SHA
+        if: steps.check_upstream.outputs.should_build == 'true'
+        run: |
+          echo "${{ steps.check_upstream.outputs.latest_sha }}" > last_sha.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_sha.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update upstream SHA to ${{ steps.check_upstream.outputs.latest_sha }}" && git push)
+
+      - name: Publish Release
+        if: steps.check_upstream.outputs.should_build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_DATE=$(date -u +'%Y.%m.%d')
+          SHORT_SHA=$(echo "${{ steps.check_upstream.outputs.latest_sha }}" | cut -c1-7)
+          RELEASE_TAG="v${TAG_DATE}-${SHORT_SHA}"
+
+          gh release create "$RELEASE_TAG" ganjoor.db.gz ganjoor.db.zst \
+            --title "Ganjoor SQLite Database ($RELEASE_TAG)" \
+            --notes "Automated build from ganjoor/ganjoor-data commit ${{ steps.check_upstream.outputs.latest_sha }} on $(date -u +'%Y-%m-%d %H:%M:%S UTC')." \
+            --latest
