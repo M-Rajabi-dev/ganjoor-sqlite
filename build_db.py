@@ -14,7 +14,7 @@ def init_db(con):
     cur.execute("""
     CREATE TABLE poets (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
+        name TEXT,
         nickname TEXT,
         description TEXT,
         full_url TEXT,
@@ -30,36 +30,32 @@ def init_db(con):
         id INTEGER PRIMARY KEY,
         poet_id INTEGER,
         parent_id INTEGER,
-        title TEXT NOT NULL,
-        full_url TEXT,
-        FOREIGN KEY (poet_id) REFERENCES poets(id),
-        FOREIGN KEY (parent_id) REFERENCES categories(id)
+        title TEXT,
+        full_url TEXT
     );
     """)
     cur.execute("""
     CREATE TABLE poems (
         id INTEGER PRIMARY KEY,
         cat_id INTEGER,
-        title TEXT NOT NULL,
+        title TEXT,
         full_title TEXT,
         full_url TEXT,
         rhyme_letters TEXT,
         source_name TEXT,
         poem_summary TEXT,
         metre_id INTEGER,
-        metre_rhythm TEXT,
-        FOREIGN KEY (cat_id) REFERENCES categories(id)
+        metre_rhythm TEXT
     );
     """)
     cur.execute("""
     CREATE TABLE verses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        poem_id INTEGER NOT NULL,
-        v_order INTEGER NOT NULL,
-        couplet_index INTEGER NOT NULL,
+        poem_id INTEGER,
+        v_order INTEGER,
+        couplet_index INTEGER,
         position TEXT,
-        text TEXT NOT NULL,
-        FOREIGN KEY (poem_id) REFERENCES poems(id)
+        text TEXT
     );
     """)
     con.commit()
