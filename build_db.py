@@ -157,6 +157,68 @@ def process_data(data_dir, con):
         cur.executemany("INSERT INTO verses (poem_id, v_order, couplet_index, position, text) VALUES (?, ?, ?, ?, ?)", verse_rows)
     con.commit()
 
+def merge_legacy_db(legacy_db_path, con):
+    if not legacy_db_path or not os.path.exists(legacy_db_path):
+        return
+
+    target_poet_ids = (
+        501, 502, 503, 504, 505, 506, 507, 510, 511, 512,
+        513, 514, 515, 516, 517, 518, 603, 608, 609, 610,
+        616, 618
+    )
+
+    src = sqlite3.connect(legacy_db_path)
+    src_cur = src.cursor()
+    dest_cur = con.cursor()
+
+    placeholders = ",".join("?" for _ in target_poet_ids)
+    src_cur.execute(f"SELECT id, name, description FROM poet WHERE id IN ({placeholders})", target_poet_ids)
+    poet_rows = [(r[0], r[1], None, r[2], None, None, None, None, None, None) for r in src_cur.fetchall()]
+    dest_cur.executemany("INSERT OR IGNORE INTO poets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", poet_rows)
+
+    src_cur.execute(f"SELECT id, poet_id, parent_id, text, url FROM cat WHERE poet_id IN ({placeholders})", target_poet_ids)
+    cat_rows = [(r[0], r[1], r[2], r[3] or "", r[4]) for r in src_cur.fetchall()]
+    dest_cur.executemany("INSERT OR IGNORE INTO categories VALUES (?, ?, ?, ?, ?)", cat_rows)
+
+    src_cur.execute(f"""
+        SELECT pm.id, pm.cat_id, pm.title, pm.url
+        FROM poem pm
+        JOIN cat c ON pm.cat_id = c.id
+        WHERE c.poet_id IN ({placeholders})
+    """, target_poet_ids)
+    poem_rows = [(r[0], r[1], r[2] or "", r[2], r[3], None, None, None, None, None) for r in src_cur.fetchall()]
+    dest_cur.executemany("INSERT OR IGNORE INTO poems VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", poem_rows)
+
+    src_cur.execute(f"""
+        SELECT v.poem_id, v.vorder, v.position, v.text
+        FROM verse v
+        JOIN poem pm ON v.poem_id = pm.id
+        JOIN cat c ON pm.cat_id = c.id
+        WHERE c.poet_id IN ({placeholders})
+        ORDER BY v.poem_id, v.vorder
+    """, target_poet_ids)
+
+    verse_rows = []
+    while True:
+        batch = src_cur.fetchmany(5000)
+        if not batch:
+            break
+        for r in batch:
+            poem_id = r[0]
+            v_order = r[1]
+            couplet_index = v_order // 2
+            position = str(r[2]) if r[2] is not None else "0"
+            text = r[3] or ""
+            verse_rows.append((poem_id, v_order, couplet_index, position, text))
+        dest_cur.executemany("INSERT INTO verses (poem_id, v_order, couplet_index, position, text) VALUES (?, ?, ?, ?, ?)", verse_rows)
+        con.commit()
+        verse_rows.clear()
+
+    con.commit()
+    src.close()
+
+def build_indices_and_fts(con):
+    cur = con.cursor()
     cur.execute("CREATE INDEX idx_categories_poet_id ON categories(poet_id);")
     cur.execute("CREATE INDEX idx_categories_parent_id ON categories(parent_id);")
     cur.execute("CREATE INDEX idx_poems_cat_id ON poems(cat_id);")
@@ -165,14 +227,13 @@ def process_data(data_dir, con):
     
     cur.execute("CREATE VIRTUAL TABLE verses_fts USING fts5(text, poem_id UNINDEXED, content='verses', content_rowid='id', tokenize='unicode61');")
     cur.execute("INSERT INTO verses_fts(verses_fts) VALUES('rebuild');")
-    con.commit()
-
     cur.execute("PRAGMA optimize;")
     con.commit()
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default="ganjoor-data-main")
+    parser.add_argument("--legacy-db", default=None)
     parser.add_argument("--output", default="ganjoor.db")
     args = parser.parse_args()
 
@@ -181,7 +242,11 @@ def main():
 
     con = sqlite3.connect(args.output)
     init_db(con)
-    process_data(args.data_dir, con)
+    if os.path.exists(args.data_dir):
+        process_data(args.data_dir, con)
+    if args.legacy_db:
+        merge_legacy_db(args.legacy_db, con)
+    build_indices_and_fts(con)
     con.close()
 
 if __name__ == "__main__":

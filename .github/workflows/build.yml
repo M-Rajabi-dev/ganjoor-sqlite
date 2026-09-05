@@ -45,18 +45,21 @@ jobs:
             echo "should_build=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Download and extract data
+      - name: Download data
         if: steps.check_upstream.outputs.should_build == 'true'
         run: |
           curl -sSL -o ganjoor-data.tar.gz https://github.com/ganjoor/ganjoor-data/archive/refs/heads/main.tar.gz
           tar -xzf ganjoor-data.tar.gz
           rm ganjoor-data.tar.gz
+          curl -sSL -o legacy-db.zip https://github.com/ganjoor/desktop/releases/download/v3.0/ganjoor-db-14030706.zip
+          unzip -q legacy-db.zip
+          rm legacy-db.zip
 
       - name: Build SQLite database
         if: steps.check_upstream.outputs.should_build == 'true'
         run: |
-          python build_db.py --data-dir ganjoor-data-main --output ganjoor.db
-          rm -rf ganjoor-data-main
+          python build_db.py --data-dir ganjoor-data-main --legacy-db ganjoor.s3db --output ganjoor.db
+          rm -rf ganjoor-data-main ganjoor.s3db
 
       - name: Compress database
         if: steps.check_upstream.outputs.should_build == 'true'
