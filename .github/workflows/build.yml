@@ -61,9 +61,9 @@ jobs:
       - name: Compress database
         if: steps.check_upstream.outputs.should_build == 'true'
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq zstd
-          zstd -19 -q ganjoor.db -o ganjoor.db.zst
-          gzip -9 -k ganjoor.db
+          sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full zip
+          zip -9 -q ganjoor.db.zip ganjoor.db
+          7z a -t7z -m0=lzma2 -mx=9 -mfb=64 -md=64m -ms=on ganjoor.db.7z ganjoor.db
 
       - name: Update commit SHA
         if: steps.check_upstream.outputs.should_build == 'true'
@@ -83,7 +83,7 @@ jobs:
           SHORT_SHA=$(echo "${{ steps.check_upstream.outputs.latest_sha }}" | cut -c1-7)
           RELEASE_TAG="v${TAG_DATE}-${SHORT_SHA}"
 
-          gh release create "$RELEASE_TAG" ganjoor.db.gz ganjoor.db.zst \
+          gh release create "$RELEASE_TAG" ganjoor.db ganjoor.db.zip ganjoor.db.7z \
             --title "Ganjoor SQLite Database ($RELEASE_TAG)" \
             --notes "Automated build from ganjoor/ganjoor-data commit ${{ steps.check_upstream.outputs.latest_sha }} on $(date -u +'%Y-%m-%d %H:%M:%S UTC')." \
-            --latest
+            --latest || gh release upload "$RELEASE_TAG" ganjoor.db ganjoor.db.zip ganjoor.db.7z --clobber
